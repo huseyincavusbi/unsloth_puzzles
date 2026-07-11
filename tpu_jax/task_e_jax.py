@@ -16,21 +16,17 @@ def chunked_cross_entropy(X, W, Y, chunk_size):
     N = X.shape[0]
     
     def scan_fn(carry, idx):
-        # Slice chunks — handle partial last chunk
+        # Slice chunks; mask out padding on partial last chunk
+        X_chunk = jax.lax.dynamic_slice_in_dim(X, idx, chunk_size, axis=0)
+        Y_chunk = jax.lax.dynamic_slice_in_dim(Y, idx, chunk_size, axis=0)
         actual_size = jnp.minimum(chunk_size, N - idx)
-        X_chunk = jax.lax.dynamic_slice_in_dim(X, idx, chunk_size, axis=0)[:actual_size]
-        Y_chunk = jax.lax.dynamic_slice_in_dim(Y, idx, chunk_size, axis=0)[:actual_size]
+        mask = jnp.arange(chunk_size) < actual_size
         
-        # Forward pass for chunk
-        logits = jnp.dot(X_chunk, W.T) # (C, V)
+        logits = jnp.dot(X_chunk, W.T)
+        lse = jax.scipy.special.logsumexp(logits, axis=1, where=mask[:, None])
+        correct_logits = logits[jnp.arange(chunk_size), Y_chunk]
         
-        # LogSumExp
-        lse = jax.scipy.special.logsumexp(logits, axis=1) # (C,)
-        
-        # Target logits
-        correct_logits = logits[jnp.arange(actual_size), Y_chunk]
-        
-        loss_chunk = lse - correct_logits
+        loss_chunk = jnp.where(mask, lse - correct_logits, 0.0)
         return carry + jnp.sum(loss_chunk), None
 
     total_loss, _ = jax.lax.scan(scan_fn, 0.0, jnp.arange(0, N, chunk_size))
