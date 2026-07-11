@@ -68,7 +68,9 @@ def ce_bwd(chunk_size, res, g):
         dX_chunk = jnp.dot(d_logits, W)
         dW_chunk = jnp.dot(d_logits.T, X_chunk)
         
-        return dW_acc + dW_chunk, dX_chunk    dW_total, dX_chunks = jax.lax.scan(scan_fn_bwd, jnp.zeros_like(W), jnp.arange(0, N, chunk_size))
+        return dW_acc + dW_chunk, dX_chunk
+
+    dW_total, dX_chunks = jax.lax.scan(scan_fn_bwd, jnp.zeros_like(W), jnp.arange(0, N, chunk_size))
     
     # Flatten dX chunks back to (N, H)
     dX_full = dX_chunks.reshape(-1, H)[:N]  # handle partial last chunk
