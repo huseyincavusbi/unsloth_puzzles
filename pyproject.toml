@@ -1,0 +1,23 @@
+[project]
+name = "unsloth-puzzles-multiplatform"
+version = "1.0.0"
+description = "Multi-platform architecture (NVIDIA, Apple Silicon, Google TPU, AMD ROCm) for Unsloth AI challenges"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Huseyin Cavus" }
+]
+dependencies = [
+    "torch>=2.4.0",
+    "transformers>=4.43.0",
+    "peft>=0.11.0",
+    "trl>=0.9.6",
+    "accelerate>=0.33.0",
+    "bitsandbytes>=0.43.3",
+    "datasets>=2.20.0",
+    # Optional hardware-specific libraries:
+    # "triton", # NVIDIA/AMD
+    # "jax", "jaxlib", # Google TPU / JAX Simulation
+    # "mlx", # Apple Silicon
+]
