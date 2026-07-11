@@ -16,9 +16,10 @@ def chunked_cross_entropy(X, W, Y, chunk_size):
     N = X.shape[0]
     
     def scan_fn(carry, idx):
-        # Slice chunks
-        X_chunk = jax.lax.dynamic_slice_in_dim(X, idx, chunk_size, axis=0)
-        Y_chunk = jax.lax.dynamic_slice_in_dim(Y, idx, chunk_size, axis=0)
+        # Slice chunks — handle partial last chunk
+        actual_size = jnp.minimum(chunk_size, N - idx)
+        X_chunk = jax.lax.dynamic_slice_in_dim(X, idx, chunk_size, axis=0)[:actual_size]
+        Y_chunk = jax.lax.dynamic_slice_in_dim(Y, idx, chunk_size, axis=0)[:actual_size]
         
         # Forward pass for chunk
         logits = jnp.dot(X_chunk, W.T) # (C, V)
@@ -27,7 +28,7 @@ def chunked_cross_entropy(X, W, Y, chunk_size):
         lse = jax.scipy.special.logsumexp(logits, axis=1) # (C,)
         
         # Target logits
-        correct_logits = logits[jnp.arange(chunk_size), Y_chunk]
+        correct_logits = logits[jnp.arange(actual_size), Y_chunk]
         
         loss_chunk = lse - correct_logits
         return carry + jnp.sum(loss_chunk), None
@@ -52,14 +53,15 @@ def ce_bwd(chunk_size, res, g):
     def scan_fn_bwd(carry, idx):
         dW_acc = carry
         
-        X_chunk = jax.lax.dynamic_slice_in_dim(X, idx, chunk_size, axis=0)
-        Y_chunk = jax.lax.dynamic_slice_in_dim(Y, idx, chunk_size, axis=0)
+        actual_size = jnp.minimum(chunk_size, N - idx)
+        X_chunk = jax.lax.dynamic_slice_in_dim(X, idx, chunk_size, axis=0)[:actual_size]
+        Y_chunk = jax.lax.dynamic_slice_in_dim(Y, idx, chunk_size, axis=0)[:actual_size]
         
         logits = jnp.dot(X_chunk, W.T)
         probs = jax.nn.softmax(logits, axis=-1)
         
         # Derivative of Cross Entropy: (probs - 1.0 for target class)
-        d_logits = probs.at[jnp.arange(chunk_size), Y_chunk].add(-1.0)
+        d_logits = probs.at[jnp.arange(actual_size), Y_chunk].add(-1.0)
         
         # Scale by upstream gradient `g` and batch size `N`
         d_logits = d_logits * (g / N)
@@ -74,7 +76,7 @@ def ce_bwd(chunk_size, res, g):
     dW_total, dX_chunks = jax.lax.scan(scan_fn_bwd, jnp.zeros_like(W), jnp.arange(0, N, chunk_size))
     
     # Flatten dX chunks back to (N, H)
-    dX_full = dX_chunks.reshape(N, H)
+    dX_full = dX_chunks.reshape(-1, H)[:N]  # handle partial last chunk
     
     # Return gradients for (X, W, Y) - None for non-differentiable params
     return (dX_full, dW_total, None)
