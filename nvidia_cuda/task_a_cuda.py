@@ -1,6 +1,7 @@
 import torch
 import triton
 import triton.language as tl
+from triton import cdiv as triton_cdiv
 
 NF4_VALS = [
     -1.0, -0.6961928, -0.52507305, -0.39491749, -0.28444138, -0.18477343, -0.09105004, 0.0,
@@ -35,8 +36,8 @@ def _dequantize_nf4_kernel(
     # Unpack nibbles: 2 nibbles per byte
     byte_offsets = offsets // 2
     packed = tl.load(weight_ptr + byte_offsets, mask=mask)
-    is_high = offsets % 2
-    nibble = tl.where(is_high == 1, (packed >> 4) & 0x0F, packed & 0x0F)
+    is_odd = offsets & 1
+    nibble = tl.where(is_odd == 1, packed & 0x0F, (packed >> 4) & 0x0F)
 
     # NF4 codebook lookup
     nf4_val = tl.load(nf4_lut_ptr + nibble, mask=mask)
@@ -71,11 +72,12 @@ def dequantize_nf4_cuda(weight_uint8, quant_state):
     state2_code = quant_state.state2.code.to(device)
     state2_absmax = quant_state.state2.absmax.flatten().to(device)
     offset = float(quant_state.offset.item())
-    absmax = quant_state.absmax.flatten().to(torch.int32)
+    absmax = quant_state.absmax.flatten().contiguous()
 
     out = torch.empty(n_elements, dtype=target_dtype, device=device)
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
+    BLOCK_SIZE = 512
+    grid = (triton_cdiv(n_elements, BLOCK_SIZE),)
     _dequantize_nf4_kernel[grid](
         weight_uint8, absmax, state2_code, state2_absmax,
         out, nf4_lut, n_elements, offset,
