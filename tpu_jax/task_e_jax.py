@@ -53,27 +53,22 @@ def ce_bwd(chunk_size, res, g):
     def scan_fn_bwd(carry, idx):
         dW_acc = carry
         
+        X_chunk = jax.lax.dynamic_slice_in_dim(X, idx, chunk_size, axis=0)
+        Y_chunk = jax.lax.dynamic_slice_in_dim(Y, idx, chunk_size, axis=0)
         actual_size = jnp.minimum(chunk_size, N - idx)
-        X_chunk = jax.lax.dynamic_slice_in_dim(X, idx, chunk_size, axis=0)[:actual_size]
-        Y_chunk = jax.lax.dynamic_slice_in_dim(Y, idx, chunk_size, axis=0)[:actual_size]
+        mask = jnp.arange(chunk_size) < actual_size
         
         logits = jnp.dot(X_chunk, W.T)
         probs = jax.nn.softmax(logits, axis=-1)
         
-        # Derivative of Cross Entropy: (probs - 1.0 for target class)
-        d_logits = probs.at[jnp.arange(actual_size), Y_chunk].add(-1.0)
-        
-        # Scale by upstream gradient `g` and batch size `N`
+        d_logits = probs.at[jnp.arange(chunk_size), Y_chunk].add(-1.0)
+        d_logits = jnp.where(mask[:, None], d_logits, 0.0)
         d_logits = d_logits * (g / N)
         
-        # Matrix multiply backward pass
-        dX_chunk = jnp.dot(d_logits, W) # (C, H)
-        dW_chunk = jnp.dot(d_logits.T, X_chunk) # (V, H)
+        dX_chunk = jnp.dot(d_logits, W)
+        dW_chunk = jnp.dot(d_logits.T, X_chunk)
         
-        return dW_acc + dW_chunk, dX_chunk
-
-    # Scan sequentially accumulates dW, and stacks dX
-    dW_total, dX_chunks = jax.lax.scan(scan_fn_bwd, jnp.zeros_like(W), jnp.arange(0, N, chunk_size))
+        return dW_acc + dW_chunk, dX_chunk    dW_total, dX_chunks = jax.lax.scan(scan_fn_bwd, jnp.zeros_like(W), jnp.arange(0, N, chunk_size))
     
     # Flatten dX chunks back to (N, H)
     dX_full = dX_chunks.reshape(-1, H)[:N]  # handle partial last chunk
